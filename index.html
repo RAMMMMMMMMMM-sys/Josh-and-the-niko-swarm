@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Jump Game 3D — Flash-style</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #111; font-family: Arial, sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #game-wrapper {
+    position: absolute; inset: 0; margin: auto;
+    width: 100vmin; height: 100vmin;
+    max-width: 800px; max-height: 800px;
+    overflow: hidden;
+    border: 2px solid #000;
+    background: #1E90FF;
+  }
+  #game-wrapper canvas { display: block; width: 100%; height: 100%; }
+
+  /* ============================================================
+     Quest UI — buff guy portrait (top-right) + speech bubble
+     pointing at him from the left.
+     ============================================================ */
+  #quest-ui {
+    position: absolute;
+    top: 3%;
+    right: 3%;
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  #text-bubble {
+    position: relative;
+    margin-right: -4px;      /* overlap the portrait slightly so tail can tuck in */
+    margin-top: 4%;
+    background: #fff;
+    border: 3px solid #000;
+    border-radius: 15px;
+    padding: 8px 12px;
+    font-size: 2.2vmin;
+    font-weight: bold;
+    color: #000;
+    white-space: nowrap;
+    font-family: 'Arial Black', Arial, sans-serif;
+    box-shadow: 3px 3px 0 #000;
+  }
+  /* Tail pointing RIGHT toward the buff guy portrait */
+  #text-bubble::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: -6px;
+    transform: translateY(-50%);
+    border-width: 10px 0 10px 10px;
+    border-style: solid;
+    border-color: transparent transparent transparent #fff;
+  }
+  #text-bubble::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: -10px;
+    transform: translateY(-50%);
+    border-width: 12px 0 12px 12px;
+    border-style: solid;
+    border-color: transparent transparent transparent #000;
+  }
+
+  /* Buff guy portrait */
+  #buff-portrait {
+    width: 14vmin;
+    height: 14vmin;
+    image-rendering: pixelated;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+    filter: drop-shadow(2px 3px 0 rgba(0,0,0,0.6));
+  }
+
+  /* ============================================================
+     Controls
+     ============================================================ */
+  .control-btn {
+    position: absolute;
+    background-color: #fff;
+    border: 0.8vmin solid #000;
+    display: flex; justify-content: center; align-items: center;
+    font-size: 6vmin; font-weight: 900; font-family: 'Arial Black', monospace;
+    color: #000;
+    cursor: pointer; z-index: 20;
+    touch-action: none;
+    box-shadow: 3px 3px 0 #000;
+  }
+  .control-btn:active {
+    background-color: #ccc;
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 #000;
+  }
+
+  #btn-up    { left: 16%; bottom: 32%; width: 12%; height: 12%; }
+  #btn-down  { left: 16%; bottom: 12%; width: 12%; height: 12%; }
+  #btn-left  { left: 4%;  bottom: 22%; width: 12%; height: 12%; }
+  #btn-right { left: 28%; bottom: 22%; width: 12%; height: 12%; }
+
+  #btn-jump  {
+    right: 6%; bottom: 16%; width: 16%; height: 16%;
+    font-size: 3.5vmin; background-color: #ffe066;
+  }
+
+  #end-screen {
+    position: absolute; inset: 0;
+    background: #000; display: none; z-index: 100;
+  }
+  #end-screen.show { display: block; }
+  #end-img { width: 100%; height: 100%; object-fit: contain; }
+
+  #hint {
+    position: absolute; top: 2%; left: 16%; transform: translateX(-50%);
+    color: #fff; font-size: 1.6vmin; text-shadow: 1px 1px 0 #000;
+    z-index: 15; pointer-events: none;
+    font-family: 'Arial Black', Arial, sans-serif;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<audio id="src-sound" src="jump.aac"></audio>
+
+<div id="game-wrapper">
+
+  <!-- Quest UI: bubble pointing right at the buff guy portrait -->
+  <div id="quest-ui">
+    <div id="text-bubble">
+      <span id="quest-text">quick! jump on those little retards!(0/5)</span>
+    </div>
+    <img id="buff-portrait" src="buffguy.png" alt="">
+  </div>
+
+  <div class="control-btn" id="btn-up">^</div>
+  <div class="control-btn" id="btn-down">v</div>
+  <div class="control-btn" id="btn-left">&lt;</div>
+  <div class="control-btn" id="btn-right">&gt;</div>
+  <div class="control-btn" id="btn-jump">JUMP</div>
+
+  <div id="hint">move le screen· pinch le zoom</div>
+
+  <div id="end-screen">
+    <img id="end-img" src="endscreen.jpg" alt="">
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const ASSETS = {
+  player: 'player.png',
+  buff:   'buffguy.png',
+  red:    'redguy.png',
+  end:    'endscreen.jpg',
+  grass:  'grass.jpg',
+};
+const FALLBACK_COLORS = { player: 0x2196F3, buff: 0x8B4513, red: 0xE53935 };
+
+const wrapper   = document.getElementById('game-wrapper');
+const questText = document.getElementById('quest-text');
+const endScreen = document.getElementById('end-screen');
+const soundFx   = document.getElementById('src-sound');
+
+/* Portrait fallback if buffguy.png is missing */
+const buffPortraitEl = document.getElementById('buff-portrait');
+buffPortraitEl.addEventListener('error', () => {
+  // Draw a simple brown placeholder
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.fillStyle = '#5D2E0C';
+  ctx.fillRect(16, 16, 96, 96);
+  buffPortraitEl.src = c.toDataURL();
+});
+
+/* ---------- Renderer / Scene / Camera ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+wrapper.insertBefore(renderer.domElement, wrapper.firstChild);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1E90FF);
+scene.fog = new THREE.Fog(0x1E90FF, 80, 150);
+
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 300);
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 0.35);
+sun.position.set(20, 40, 20);
+scene.add(sun);
+
+/* ============================================================
+   Ground — grass tile texture
+   ============================================================ */
+const HORIZON = 0;
+const WORLD_X_MIN = -40;
+const WORLD_X_MAX =  40;
+const WORLD_Z_MIN = -25;
+const WORLD_Z_MAX =  25;
+
+const GROUND_SIZE = 200;
+const TILE_SIZE   = 4;
+const TILE_REPEAT = GROUND_SIZE / TILE_SIZE;
+
+const grassMat = new THREE.MeshBasicMaterial({ color: 0x4CAF50 });
+new THREE.TextureLoader().load(
+  ASSETS.grass,
+  (t) => {
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(TILE_REPEAT, TILE_REPEAT);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    grassMat.map = t;
+    grassMat.color.setHex(0xffffff);
+    grassMat.needsUpdate = true;
+  },
+  undefined,
+  () => { grassMat.color.setHex(0x4CAF50); grassMat.needsUpdate = true; }
+);
+
+const baseplate = new THREE.Mesh(
+  new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
+  grassMat
+);
+baseplate.rotation.x = -Math.PI / 2;
+baseplate.position.set(0, HORIZON, 0);
+scene.add(baseplate);
+
+/* ============================================================
+   Billboard sprite factory
+   ============================================================ */
+function makeBillboardTexture(path, fallbackColor, w, h) {
+  const mat = new THREE.MeshBasicMaterial({
+    transparent: true,
+    alphaTest: 0.05,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  mesh.renderOrder = 1;
+
+  new THREE.TextureLoader().load(
+    path,
+    (t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      t.generateMipmaps = false;
+      mat.map = t;
+      mat.needsUpdate = true;
+    },
+    undefined,
+    () => {
+      mat.map = null;
+      mat.color.setHex(fallbackColor);
+      mat.needsUpdate = true;
+    }
+  );
+  return mesh;
+}
+
+/* ============================================================
+   Game State
+   ============================================================ */
+const STATE = {
+  score: 0,
+  maxScore: 5,
+  keys: {},
+  player: {
+    x: -20, y: HORIZON, z: 0,
+    vy: 0,
+    onGround: true,
+    mesh: null,
+    width: 5,
+    height: 5,
+  },
+  redGuys: [],
+  buffGuy: null,
+  camYaw: Math.PI * 0.15,
+  camPitch: 0.42,
+  camDist: 30,
+  camTarget: new THREE.Vector3(0, 2, 0),
+};
+
+const GRAVITY       = -34;
+const JUMP_VELOCITY =  17;
+const MOVE_SPEED    =  13;
+const GROUND_Y      =  HORIZON;
+const CAM_DIST_MIN  =  12;
+const CAM_DIST_MAX  =  60;
+
+{
+  const mesh = makeBillboardTexture(ASSETS.player, FALLBACK_COLORS.player, 5, 5);
+  mesh.position.set(STATE.player.x, GROUND_Y + 2.5, STATE.player.z);
+  scene.add(mesh);
+  STATE.player.mesh = mesh;
+}
+{
+  const mesh = makeBillboardTexture(ASSETS.buff, FALLBACK_COLORS.buff, 6.5, 6.5);
+  mesh.position.set(-26, GROUND_Y + 3.25, -2);
+  scene.add(mesh);
+  STATE.buffGuy = mesh;
+}
+
+function createRedGuys() {
+  for (let i = 0; i < 5; i++) {
+    const startX = -15 + i * 6 + (Math.random() * 3 - 1.5);
+    const startZ = (Math.random() - 0.5) * 12;
+    const mesh = makeBillboardTexture(ASSETS.red, FALLBACK_COLORS.red, 3.2, 3.2);
+    mesh.position.set(startX, GROUND_Y + 1.6, startZ);
+    scene.add(mesh);
+    STATE.redGuys.push({
+      mesh, hit: false,
+      width: 3.2, height: 3.2,
+      x: startX, z: startZ,
+      speed: 1.5 + Math.random() * 2.2,
+      dirX: Math.random() > 0.5 ? 1 : -1,
+      dirZ: Math.random() > 0.5 ? 1 : -1,
+      fell: 0,
+      baseY: GROUND_Y + 1.6,
+      hopPhase: Math.floor(Math.random() * 8),
+    });
+  }
+}
+createRedGuys();
+
+/* ---------- Input ---------- */
+window.addEventListener('keydown', (e) => {
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+  STATE.keys[e.key] = true;
+});
+window.addEventListener('keyup', (e) => { STATE.keys[e.key] = false; });
+
+function setupBtn(id, keyName) {
+  const btn = document.getElementById(id);
+  const start = (e) => { e.preventDefault(); STATE.keys[keyName] = true; };
+  const end   = (e) => { e.preventDefault(); STATE.keys[keyName] = false; };
+  btn.addEventListener('touchstart', start, { passive: false });
+  btn.addEventListener('touchend',   end,   { passive: false });
+  btn.addEventListener('touchcancel',end,   { passive: false });
+  btn.addEventListener('mousedown',  start);
+  btn.addEventListener('mouseup',    end);
+  btn.addEventListener('mouseleave', end);
+}
+setupBtn('btn-left',  'ArrowLeft');
+setupBtn('btn-right', 'ArrowRight');
+setupBtn('btn-up',    'ArrowUp');
+setupBtn('btn-down',  'ArrowDown');
+setupBtn('btn-jump',  ' ');
+
+/* ---------- Camera controls ---------- */
+let activePointers = new Map();
+let lastPinchDist = 0;
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  renderer.domElement.setPointerCapture(e.pointerId);
+  if (activePointers.size === 2) {
+    const pts = [...activePointers.values()];
+    lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const prev = activePointers.get(e.pointerId);
+  if (!prev) return;
+  const dx = e.clientX - prev.x;
+  const dy = e.clientY - prev.y;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (activePointers.size === 1) {
+    if (Math.abs(dx) > 0.5) STATE.camYaw -= Math.sign(dx) * 0.06;
+    if (Math.abs(dy) > 1) {
+      STATE.camPitch = THREE.MathUtils.clamp(
+        STATE.camPitch + Math.sign(dy) * 0.03, 0.15, 1.2
+      );
+    }
+  } else if (activePointers.size === 2) {
+    const pts = [...activePointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (lastPinchDist > 0) {
+      const delta = dist - lastPinchDist;
+      if (Math.abs(delta) > 2) {
+        STATE.camDist = THREE.MathUtils.clamp(
+          STATE.camDist - Math.sign(delta) * 1.2, CAM_DIST_MIN, CAM_DIST_MAX
+        );
+      }
+    }
+    lastPinchDist = dist;
+  }
+});
+
+const endPointer = (e) => {
+  activePointers.delete(e.pointerId);
+  try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(err) {}
+  if (activePointers.size < 2) lastPinchDist = 0;
+};
+renderer.domElement.addEventListener('pointerup', endPointer);
+renderer.domElement.addEventListener('pointercancel', endPointer);
+renderer.domElement.addEventListener('pointerleave', endPointer);
+
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  STATE.camDist = THREE.MathUtils.clamp(
+    STATE.camDist + Math.sign(e.deltaY) * 2, CAM_DIST_MIN, CAM_DIST_MAX
+  );
+}, { passive: false });
+
+/* ---------- Resize ---------- */
+function resize() {
+  const w = wrapper.clientWidth || 1;
+  const h = wrapper.clientHeight || 1;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ============================================================
+   Choppy stepped tick (15 FPS)
+   ============================================================ */
+const FPS = 15;
+const FRAME_MS = 1000 / FPS;
+let nextFrameTime = performance.now();
+const HOP_STEPS = [0, 0.35, 0.5, 0.35, 0, -0.15, 0, 0];
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (now < nextFrameTime) { renderer.render(scene, camera); return; }
+  nextFrameTime = now + FRAME_MS;
+
+  const dt = 1 / FPS;
+  if (STATE.score < STATE.maxScore) {
+    updatePlayer(dt);
+    updateRedGuysStepped();
+    checkCollisions();
+  }
+  updatePlayerVisualStepped();
+  billboardAll();
+  updateCameraStepped();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+/* ============================================================
+   Camera-relative movement
+   ============================================================ */
+const _camForward = new THREE.Vector3();
+const _camRight   = new THREE.Vector3();
+const _up         = new THREE.Vector3(0, 1, 0);
+
+function getCameraBasis() {
+  _camForward.subVectors(STATE.camTarget, camera.position);
+  _camForward.y = 0;
+  if (_camForward.lengthSq() < 0.0001) _camForward.set(0, 0, -1);
+  _camForward.normalize();
+  _camRight.crossVectors(_up, _camForward).normalize();
+}
+
+function updatePlayer(dt) {
+  const p = STATE.player;
+  getCameraBasis();
+
+  let moveX = 0, moveZ = 0;
+  if (STATE.keys['ArrowUp'])    { moveX += _camForward.x; moveZ += _camForward.z; }
+  if (STATE.keys['ArrowDown'])  { moveX -= _camForward.x; moveZ -= _camForward.z; }
+  if (STATE.keys['ArrowRight']) { moveX += _camRight.x;   moveZ += _camRight.z; }
+  if (STATE.keys['ArrowLeft'])  { moveX -= _camRight.x;   moveZ -= _camRight.z; }
+
+  const len = Math.hypot(moveX, moveZ);
+  if (len > 0.0001) {
+    p.x += (moveX / len) * MOVE_SPEED * dt;
+    p.z += (moveZ / len) * MOVE_SPEED * dt;
+  }
+
+  p.x = THREE.MathUtils.clamp(p.x, WORLD_X_MIN, WORLD_X_MAX);
+  p.z = THREE.MathUtils.clamp(p.z, WORLD_Z_MIN, WORLD_Z_MAX);
+
+  if (STATE.keys[' '] && p.onGround) { p.vy = JUMP_VELOCITY; p.onGround = false; }
+  if (!p.onGround) {
+    p.vy += GRAVITY * dt;
+    p.y  += p.vy * dt;
+    if (p.y <= GROUND_Y) { p.y = GROUND_Y; p.vy = 0; p.onGround = true; }
+  }
+}
+
+let visualFrameCount = 0;
+function updatePlayerVisualStepped() {
+  visualFrameCount++;
+  const p = STATE.player;
+  const bob = (p.onGround && (visualFrameCount % 4) < 2) ? 0 : 0.15;
+  p.mesh.position.set(p.x, p.y + p.height / 2 + bob, p.z);
+}
+
+function updateRedGuysStepped() {
+  STATE.redGuys.forEach((g) => {
+    if (g.hit) {
+      g.fell = Math.min(g.fell + 0.25, 1);
+      const steps = [0, Math.PI * 0.25, Math.PI * 0.4, Math.PI * 0.5];
+      g.mesh.rotation.z = -steps[Math.floor(g.fell * 3)];
+      g.mesh.position.y = g.baseY - g.fell * g.height * 0.6;
+      g.mesh.material.opacity = 1 - g.fell * 0.35;
+      return;
+    }
+    g.x += g.speed * g.dirX * (1 / FPS) * 2;
+    g.z += g.speed * g.dirZ * (1 / FPS) * 2;
+    if (g.x <= WORLD_X_MIN + 2) { g.x = WORLD_X_MIN + 2; g.dirX = 1; }
+    if (g.x >= WORLD_X_MAX - 2) { g.x = WORLD_X_MAX - 2; g.dirX = -1; }
+    if (g.z <= WORLD_Z_MIN + 2) { g.z = WORLD_Z_MIN + 2; g.dirZ = 1; }
+    if (g.z >= WORLD_Z_MAX - 2) { g.z = WORLD_Z_MAX - 2; g.dirZ = -1; }
+    g.hopPhase = (g.hopPhase + 1) % HOP_STEPS.length;
+    g.mesh.position.set(g.x, g.baseY + HOP_STEPS[g.hopPhase], g.z);
+    g.mesh.scale.x = g.dirX >= 0 ? 1 : -1;
+  });
+}
+
+function checkCollisions() {
+  const p = STATE.player;
+  const pX0 = p.x - p.width / 2, pX1 = p.x + p.width / 2;
+  const pZ0 = p.z - 1.5,        pZ1 = p.z + 1.5;
+  const pY0 = p.y,              pY1 = p.y + p.height;
+
+  STATE.redGuys.forEach((g) => {
+    if (g.hit) return;
+    const gX0 = g.x - g.width / 2, gX1 = g.x + g.width / 2;
+    const gZ0 = g.z - 1.0,        gZ1 = g.z + 1.0;
+    const gY0 = g.mesh.position.y - g.height / 2;
+    const gY1 = g.mesh.position.y + g.height / 2;
+    const oX = pX1 > gX0 + 0.6 && pX0 < gX1 - 0.6;
+    const oZ = pZ1 > gZ0 + 0.4 && pZ0 < gZ1 - 0.4;
+    const oY = pY1 > gY0 && pY0 < gY1;
+    if (oX && oZ && oY && p.vy < 0) hitRedGuy(g);
+  });
+}
+
+function hitRedGuy(g) {
+  g.hit = true;
+  STATE.score++;
+  try { soundFx.currentTime = 0; soundFx.play().catch(()=>{}); } catch(e) {}
+  questText.innerText = `quick! jump on those guys!(${STATE.score}/${STATE.maxScore})`;
+  if (STATE.score >= STATE.maxScore) {
+    setTimeout(() => endScreen.classList.add('show'), 500);
+  }
+}
+
+function billboardAll() {
+  const list = [STATE.player.mesh, STATE.buffGuy, ...STATE.redGuys.map(g => g.mesh)];
+  for (const m of list) {
+    m.rotation.y = Math.atan2(camera.position.x - m.position.x, camera.position.z - m.position.z);
+  }
+}
+
+function updateCameraStepped() {
+  const p = STATE.player;
+  STATE.camTarget.set(p.x, p.y + 2.5, p.z);
+  const yaw = STATE.camYaw;
+  const pitch = STATE.camPitch;
+  const horiz = Math.cos(pitch) * STATE.camDist;
+  camera.position.set(
+    STATE.camTarget.x + Math.sin(yaw) * horiz,
+    STATE.camTarget.y + Math.sin(pitch) * STATE.camDist,
+    STATE.camTarget.z + Math.cos(yaw) * horiz
+  );
+  camera.lookAt(STATE.camTarget);
+}
+
+const endImg = document.getElementById('end-img');
+endImg.addEventListener('error', () => {
+  endScreen.style.background = '#000';
+  endImg.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.textContent = 'YOU WIN!';
+  msg.style.cssText = 'color:#fff;font-size:12vmin;display:flex;align-items:center;justify-content:center;height:100%;font-family:Arial Black;';
+  endScreen.appendChild(msg);
+});
+</script>
+</body>
+</html>
